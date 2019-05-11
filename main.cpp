@@ -11,13 +11,17 @@
 #define _NET_WM_STATE_ADD    1
 #define _NET_WM_STATE_TOGGLE 2
 
+#define DEBUG 1
+
 // Global variables
 Display *display;
 Window rootWindow;
 
 
-bool findWindowOwnedByExe(std::string exeName, Window *window)
+std::vector<Window> findWindowsOwnedByExe(std::string exeName)
 {
+  std::vector<Window> windows;
+
   // Loop through all children of root window and check whether the executable names
   // associated with the given PID match the passed in executable name
   Atom pidAtom = XInternAtom(display, "_NET_WM_PID", true);
@@ -25,7 +29,9 @@ bool findWindowOwnedByExe(std::string exeName, Window *window)
   Window *childrenWindows;
   unsigned int numChildren;
   XQueryTree(display, rootWindow, &rootWindow, &parentWindow, &childrenWindows, &numChildren);
-  std::cout << numChildren << " children" << std::endl;
+  #ifdef DEBUG
+    std::cout << numChildren << " children of root window" << std::endl;
+  #endif
   for (int i = 0; i < numChildren; i++) {
     Atom type;
     int format;
@@ -39,9 +45,13 @@ bool findWindowOwnedByExe(std::string exeName, Window *window)
       char *exeFile = realpath(filename.c_str(), nullptr);
       if (exeFile) {
         if (strcmp(exeFile, exeName.c_str()) == 0) {
-          std::cout << "found window with PID " << pid << " and ID " << childrenWindows[i] << "." << std::endl;
-          *window = childrenWindows[i];
-          return true;
+          #ifdef DEBUG
+            std::cout << "found window with PID " << pid;
+            std::ios_base::fmtflags f(std::cout.flags());
+            std::cout << " and ID 0x" << std::hex << childrenWindows[i] << "." << std::endl;
+            std::cout.flags(f);
+          #endif
+          windows.push_back(childrenWindows[i]);
         }
 
         free(exeFile);
@@ -54,37 +64,33 @@ bool findWindowOwnedByExe(std::string exeName, Window *window)
     XFree(childrenWindows);
   }
 
-  return false;
+  return windows;
 }
 
 void handleKeypress(std::string exeName)
 {
+  Atom stateAtom = XInternAtom(display, "WM_STATE", False);
+
   // Determine if there is a window owned by the given executable
-  Window window;
-  bool found = findWindowOwnedByExe(exeName, &window);
+  auto windows = findWindowsOwnedByExe(exeName);
 
-  if (found) {
-    std::cout << "found" << std::endl;
-
-
-    Atom stateAtom = XInternAtom(display, "_NET_WM_STATE", False);
-    Atom hiddenAtom = XInternAtom(display, "_NET_WM_HIDDEN", False);
-    Atom maxHorzAtom = XInternAtom(display, "_NET_WM_STATE_MAXIMIZED_HORZ", False);
-    Atom maxVertAtom = XInternAtom(display, "_NET_WM_STATE_MAXIMIZED_VERT", False);
-
-    // Toggle visibility of window
-    XEvent xev;
-    memset(&xev, 0, sizeof(xev));
-    xev.type = ClientMessage;
-    xev.xclient.window = window;
-    xev.xclient.message_type = stateAtom;
-    xev.xclient.format = 32;
-    xev.xclient.data.l[0] = _NET_WM_STATE_TOGGLE;
-    xev.xclient.data.l[1] = hiddenAtom;
-    XSendEvent(display, rootWindow, false, SubstructureNotifyMask, &xev);
-  }
-  else {
-    std::cout << "not found" << std::endl;
+  for (auto window : windows) {
+    Atom type;
+    int format;
+    unsigned long numItems;
+    unsigned long bytesAfter;
+    unsigned char *stateProp;
+    if (XGetWindowProperty(display, window, stateAtom, 0, 1, false, AnyPropertyType,
+      &type, &format, &numItems, &bytesAfter, &stateProp) == Success && stateProp != 0) {
+      bool hidden = *((unsigned int *)stateProp) != NormalState;
+      if (hidden) {
+        XWithdrawWindow(display, window, 0);
+        XMapWindow(display, window);
+      }
+      else {
+        XIconifyWindow(display, window, 0);
+      }
+    }
   }
 }
 
@@ -109,10 +115,8 @@ int main(int argc, char *argv [])
     switch(event.type) {
       case KeyPress:
         if (event.xkey.keycode == f1Keycode) {
-          std::cout << "F1 pressed" << std::endl;
-          handleKeypress("/usr/bin/tilda");
+          handleKeypress("/usr/bin/terminator");
         } else if (event.xkey.keycode == f2Keycode) {
-          std::cout << "F2 pressed" << std::endl;
           handleKeypress("/opt/google/chrome/chrome");
         }
 
