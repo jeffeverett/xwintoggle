@@ -1,2 +1,2 @@
 xwintoggle: main.cpp
-	g++ -o xwintoggle main.cpp -lX11
+	g++ -o xwintoggle -g main.cpp -lX11
