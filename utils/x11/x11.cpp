@@ -9,6 +9,16 @@
 #include <sstream>
 #include <cstring>
 
+void printWindowDebug(unsigned long pid, Window window) {
+  #ifdef DEBUG
+    std::cout << "found window with PID " << pid;
+    std::ios_base::fmtflags f(std::cout.flags());
+    std::cout << " and ID 0x" << std::hex <<
+      window << "." << std::endl;
+    std::cout.flags(f);
+  #endif
+}
+
 namespace Utils {
   void findWindowsOwnedByExeRecursive(Display *display, std::string exeName,
     bool useCmdLine, Window startWindow, std::vector<Window> &windows) {
@@ -41,13 +51,7 @@ namespace Utils {
             ss << cmdlineFile.rdbuf();
             std::string cmdline = ss.str();
             if (cmdline.find(exeName) != -1) {
-              #ifdef DEBUG
-                std::cout << "found window with PID " << pid;
-                std::ios_base::fmtflags f(std::cout.flags());
-                std::cout << " and ID 0x" << std::hex <<
-                  childrenWindows[i] << "." << std::endl;
-                std::cout.flags(f);
-              #endif
+              printWindowDebug(pid, childrenWindows[i]);
               windows.push_back(childrenWindows[i]);
             }
           }
@@ -56,13 +60,7 @@ namespace Utils {
           char *exeFile = realpath(filename.c_str(), nullptr);
           if (exeFile) {
             if (strcmp(exeFile, exeName.c_str()) == 0) {
-              #ifdef DEBUG
-                std::cout << "found window with PID " << pid;
-                std::ios_base::fmtflags f(std::cout.flags());
-                std::cout << " and ID 0x" << std::hex <<
-                  childrenWindows[i] << "." << std::endl;
-                std::cout.flags(f);
-              #endif
+              printWindowDebug(pid, childrenWindows[i]);
               windows.push_back(childrenWindows[i]);
             }
 

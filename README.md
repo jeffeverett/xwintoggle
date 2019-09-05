@@ -11,7 +11,7 @@ sudo apt update && sudo apt install libx11-dev yaml-cpp-dev
 
 Then clone the repository:
 ```
-git clone https://
+git clone git@github.com:jeffeverett/xwintoggle.git
 ```
 
 Then build the program:

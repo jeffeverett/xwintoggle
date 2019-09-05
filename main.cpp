@@ -29,7 +29,7 @@ void handleKeypress(ApplicationLaunchData launchData) {
 
   // Determine if there is a window owned by the given executable
   auto windows = Utils::findWindowsOwnedByExe(
-    display, rootWindow, launchData.toggleBinPath, true);
+    display, rootWindow, launchData.toggleBinPath, false);
 
   if (windows.size() > 0) {
     // Toggle open windows
