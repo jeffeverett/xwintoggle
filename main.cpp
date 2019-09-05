@@ -1,12 +1,16 @@
+#include "utils/config/config.h"
+#include "utils/x11/x11.h"
+
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+#include <X11/Xproto.h>
 
 #include <iostream>
 #include <fstream>
 #include <vector>
+#include <unordered_map>
 #include <string>
 #include <cstring>
-#include <sstream>
 
 #define _NET_WM_STATE_REMOVE 0
 #define _NET_WM_STATE_ADD    1
@@ -17,143 +21,97 @@
 // Global variables
 Display *display;
 Window rootWindow;
+std::unordered_map<int, std::string> grabKeyReqs;
 
-void findWindowsOwnedByExeRecursive(std::string exeName, bool useCmdLine, Window startWindow, std::vector<Window> &windows)
-{
-  // Loop through all children of root window and check whether the executable names
-  // associated with the given PID match the passed in executable name
-  Atom pidAtom = XInternAtom(display, "_NET_WM_PID", true);
-  Window rWindow;
-  Window parentWindow;
-  Window *childrenWindows;
-  unsigned int numChildren;
-  XQueryTree(display, startWindow, &rWindow, &parentWindow, &childrenWindows, &numChildren);
-  #ifdef DEBUG
-    std::cout << numChildren << " children of window 0x";
-    std::ios_base::fmtflags f(std::cout.flags());
-    std::cout << std::hex << startWindow << std::endl;
-    std::cout.flags(f);
-  #endif
-  for (int i = 0; i < numChildren; i++) {
-    // Determine if this window matches desired criteria
-    Atom type;
-    int format;
-    unsigned long numItems;
-    unsigned long bytesAfter;
-    unsigned char *pidProp;
-    if (XGetWindowProperty(display, childrenWindows[i], pidAtom, 0, 1, false, AnyPropertyType,
-      &type, &format, &numItems, &bytesAfter, &pidProp) == Success && pidProp != 0) {
-      unsigned long pid = *((unsigned long *)pidProp);
-      if (useCmdLine) {
-        std::string filename = "/proc/" + std::to_string(pid) + "/cmdline";
-        std::ifstream cmdlineFile(filename);
-        if (cmdlineFile.is_open()) {
-          std::stringstream ss;
-          ss << cmdlineFile.rdbuf();
-          std::string cmdline = ss.str();
-          if (cmdline.find(exeName) != -1) {
-            #ifdef DEBUG
-              std::cout << "found window with PID " << pid;
-              std::ios_base::fmtflags f(std::cout.flags());
-              std::cout << " and ID 0x" << std::hex << childrenWindows[i] << "." << std::endl;
-              std::cout.flags(f);
-            #endif
-            windows.push_back(childrenWindows[i]);
-          }
-        }
-      }
-      else {
-        std::string filename = "/proc/" + std::to_string(pid) + "/exe";
-        char *exeFile = realpath(filename.c_str(), nullptr);
-        if (exeFile) {
-          if (strcmp(exeFile, exeName.c_str()) == 0) {
-            #ifdef DEBUG
-              std::cout << "found window with PID " << pid;
-              std::ios_base::fmtflags f(std::cout.flags());
-              std::cout << " and ID 0x" << std::hex << childrenWindows[i] << "." << std::endl;
-              std::cout.flags(f);
-            #endif
-            windows.push_back(childrenWindows[i]);
-          }
-
-          free(exeFile);
-        }
-      }
-      XFree(pidProp);
-    }
-
-    // Recursively check children
-    findWindowsOwnedByExeRecursive(exeName, useCmdLine, childrenWindows[i], windows);
-  }
-  if (childrenWindows) {
-    XFree(childrenWindows);
-  }
-}
-
-std::vector<Window> findWindowsOwnedByExe(std::string exeName, bool useCmdLine)
-{
-  std::vector<Window> windows;
-  findWindowsOwnedByExeRecursive(exeName, useCmdLine, rootWindow, windows);
-  return windows;
-}
-
-void handleKeypress(std::string exeName)
-{
+void handleKeypress(ApplicationLaunchData launchData) {
   Atom stateAtom = XInternAtom(display, "WM_STATE", False);
 
   // Determine if there is a window owned by the given executable
-  auto windows = findWindowsOwnedByExe(exeName, true);
+  auto windows = Utils::findWindowsOwnedByExe(
+    display, rootWindow, launchData.toggleBinPath, true);
 
-  for (auto window : windows) {
-    Atom type;
-    int format;
-    unsigned long numItems;
-    unsigned long bytesAfter;
-    unsigned char *stateProp;
-    if (XGetWindowProperty(display, window, stateAtom, 0, 1, false, AnyPropertyType,
-      &type, &format, &numItems, &bytesAfter, &stateProp) == Success && stateProp != 0) {
-      bool hidden = *((unsigned int *)stateProp) != NormalState;
-      if (hidden) {
-        XWithdrawWindow(display, window, 0);
-        XMapWindow(display, window);
+  if (windows.size() > 0) {
+    // Toggle open windows
+    for (auto window : windows) {
+      Atom type;
+      int format;
+      unsigned long numItems;
+      unsigned long bytesAfter;
+      unsigned char *stateProp;
+      if (XGetWindowProperty(display, window, stateAtom, 0, 1, false,
+        AnyPropertyType, &type, &format, &numItems, &bytesAfter,
+        &stateProp) == Success && stateProp != 0) {
+        bool hidden = *((unsigned int *)stateProp) != NormalState;
+        if (hidden) {
+          XWithdrawWindow(display, window, 0);
+          XMapRaised(display, window);
+          XSync(display, False);
+
+          XWindowAttributes windowAttributes;
+          XGetWindowAttributes(display, window, &windowAttributes);
+          if (windowAttributes.c_class != InputOnly) {
+            // XSetInputFocus(display, window, RevertToNone, CurrentTime);
+          }
+        } else {
+          XIconifyWindow(display, window, 0);
+        }
       }
-      else {
-        XIconifyWindow(display, window, 0);
-      }
+    }
+  } else {
+    // Run program in separate process
+    if (fork() == 0) {
+      execv(launchData.binPath.c_str(), &launchData.args[0]);
     }
   }
 }
 
-int main(int argc, char *argv [])
-{
+int x11ErrorHandler(Display *display, XErrorEvent *error) {
+  switch (error->request_code) {
+    case X_GrabKey:
+      std::cout << "Error: Attempt to grab key \"" << grabKeyReqs[error->serial]
+        << "\" failed. Ungrab this key or choose another." << std::endl;
+      break;
+    default:
+      std::cout << "Error: Unhandled X11 error for request with opcode "
+        << error->request_code << "." << std::endl;
+  }
+
+  return 0;
+}
+
+int main(int argc, char *argv[]) {
+  // Specify error handling function
+  XSetErrorHandler(x11ErrorHandler);
+
   // Open connection to the server
   display = XOpenDisplay("");
   rootWindow = DefaultRootWindow(display);
 
+  // Determine configuration
+  Config config = Utils::parseConfig(display, "config.yaml");
+
   // Grab relevant keyboard shortcuts
-  int f1Keycode = XKeysymToKeycode(display, XK_F1);
-  int f2Keycode = XKeysymToKeycode(display, XK_F2);
-  XGrabKey(display, f1Keycode, AnyModifier, rootWindow, false, GrabModeAsync, GrabModeAsync);
-  XGrabKey(display, f2Keycode, 0, rootWindow, false, GrabModeAsync, GrabModeAsync);
+  for (auto launchData : config.launchData) {
+    grabKeyReqs[NextRequest(display)] = launchData.key;
+    XGrabKey(display, launchData.keyCode, AnyModifier, rootWindow, false,
+      GrabModeAsync, GrabModeAsync);
+  }
+
+  // Print start message
+  std::cout << "Now listening for specified keys." << std::endl;
 
   // Enter the event loop
   XEvent event;
   bool done = false;
-  while(!done)
-  {
+  while (!done) {
     XNextEvent(display, &event);
-    switch(event.type) {
+    switch (event.type) {
       case KeyPress:
-        if (event.xkey.keycode == f1Keycode) {
-          handleKeypress("/usr/bin/terminator");
-        } else if (event.xkey.keycode == f2Keycode) {
-          handleKeypress("/opt/google/chrome/chrome");
-        }
-
+        handleKeypress(config.keyDataMapping[event.xkey.keycode]);
         break;
     }
   }
 
-	// Clean up before exiting
+  // Clean up before exiting
   XCloseDisplay(display);
 }

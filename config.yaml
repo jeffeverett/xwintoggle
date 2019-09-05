@@ -1,0 +1,6 @@
+launchData:
+- key: F1
+  binPath: /usr/bin/gnome-terminal
+  toggleBinPath: /usr/lib/gnome-terminal/gnome-terminal-server
+- key: F3
+  binPath: /opt/google/chrome/chrome
