@@ -11,6 +11,7 @@
 #include <unordered_map>
 #include <string>
 #include <cstring>
+#include <pwd.h>
 
 #define _NET_WM_STATE_REMOVE 0
 #define _NET_WM_STATE_ADD    1
@@ -80,6 +81,16 @@ int x11ErrorHandler(Display *display, XErrorEvent *error) {
 }
 
 int main(int argc, char *argv[]) {
+  // Determine location of config file through CLI arguments
+  std::string homeDir;
+  if ((homeDir = getenv("HOME")).empty()) {
+    homeDir = getpwuid(getuid())->pw_dir;
+  }
+  std::string configFilePath = homeDir + "/.xwintoggle/config.yaml";
+  if (argc > 1) {
+    configFilePath = argv[1];
+  }
+
   // Specify error handling function
   XSetErrorHandler(x11ErrorHandler);
 
@@ -88,7 +99,7 @@ int main(int argc, char *argv[]) {
   rootWindow = DefaultRootWindow(display);
 
   // Determine configuration
-  Config config = Utils::parseConfig(display, "config.yaml");
+  Config config = Utils::parseConfig(display, configFilePath);
 
   // Grab relevant keyboard shortcuts
   for (auto launchData : config.launchData) {
