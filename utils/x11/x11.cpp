@@ -20,6 +20,12 @@ void printWindowDebug(unsigned long pid, Window window) {
 }
 
 namespace Utils {
+  bool windowIsViewable(Display *display, Window window) {
+    XWindowAttributes windowAttributes;
+    XGetWindowAttributes(display, window, &windowAttributes);
+    return windowAttributes.map_state == IsViewable;
+  }
+
   void findWindowsOwnedByExeRecursive(Display *display, std::string exeName,
     bool useCmdLine, Window startWindow, std::vector<Window> &windows) {
     // Loop through all children of root window and

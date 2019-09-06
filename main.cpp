@@ -12,6 +12,7 @@
 #include <string>
 #include <cstring>
 #include <pwd.h>
+#include <time.h>
 
 #define _NET_WM_STATE_REMOVE 0
 #define _NET_WM_STATE_ADD    1
@@ -22,6 +23,7 @@
 // Global variables
 Display *display;
 Window rootWindow;
+Window predicateWindow;
 std::unordered_map<int, std::string> grabKeyReqs;
 
 void handleKeypress(ApplicationLaunchData launchData) {
@@ -42,18 +44,28 @@ void handleKeypress(ApplicationLaunchData launchData) {
       if (XGetWindowProperty(display, window, stateAtom, 0, 1, false,
         AnyPropertyType, &type, &format, &numItems, &bytesAfter,
         &stateProp) == Success && stateProp != 0) {
-        bool hidden = *((unsigned int *)stateProp) != NormalState;
+        auto windowState = *((unsigned int *)stateProp);
+        if (windowState == WithdrawnState) {
+          continue;
+        }
+        bool hidden = *((unsigned int *)stateProp) == IconicState;
         if (hidden) {
+          std::cout << "Displaying window " << window << "." << std::endl;
           XWithdrawWindow(display, window, 0);
-          XMapRaised(display, window);
-          XSync(display, False);
+          XMapWindow(display, window);
 
-          XWindowAttributes windowAttributes;
-          XGetWindowAttributes(display, window, &windowAttributes);
-          if (windowAttributes.c_class != InputOnly) {
-            // XSetInputFocus(display, window, RevertToNone, CurrentTime);
+          struct timespec sleeptime;
+          sleeptime.tv_sec = 0;
+          sleeptime.tv_nsec = 10000000L;  // 0.01s
+          while (!Utils::windowIsViewable(display, window)) {
+            std::cout << "sleeping 0.01s" << std::endl;
+            nanosleep(&sleeptime, nullptr);
           }
+          // Wait for map
+          XSetInputFocus(display, window, RevertToNone, CurrentTime);
+          XRaiseWindow(display, window);
         } else {
+          std::cout << "Hiding window " << window << "." << std::endl;
           XIconifyWindow(display, window, 0);
         }
       }
@@ -74,7 +86,8 @@ int x11ErrorHandler(Display *display, XErrorEvent *error) {
       break;
     default:
       std::cout << "Error: Unhandled X11 error for request with opcode "
-        << error->request_code << "." << std::endl;
+        << +error->request_code << ". Error code: " << +error->error_code
+        << "." << std::endl;
   }
 
   return 0;
