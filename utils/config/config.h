@@ -12,7 +12,7 @@ typedef struct ApplicationLaunchData {
   int keyCode;
   std::string binPath;
   std::string toggleBinPath;
-  std::vector<char*> args;
+  std::vector<std::string> args;
 } ApplicationLaunchData;
 
 typedef struct Config {

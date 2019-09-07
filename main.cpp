@@ -12,6 +12,9 @@
 #include <string>
 #include <cstring>
 #include <pwd.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <time.h>
 
 #define _NET_WM_STATE_REMOVE 0
@@ -49,8 +52,11 @@ void handleKeypress(ApplicationLaunchData launchData) {
           continue;
         }
         bool hidden = *((unsigned int *)stateProp) == IconicState;
-        if (hidden) {
-          std::cout << "Displaying window " << window << "." << std::endl;
+        bool covered = !Utils::windowIsVisible(display, window, 0.5f);
+        if (hidden || covered) {
+          std::cout << "Info: Displaying window " << window <<
+            " belonging to binary \"" << launchData.binPath << "\"." <<
+            std::endl;
           XWithdrawWindow(display, window, 0);
           XMapWindow(display, window);
 
@@ -58,22 +64,37 @@ void handleKeypress(ApplicationLaunchData launchData) {
           sleeptime.tv_sec = 0;
           sleeptime.tv_nsec = 10000000L;  // 0.01s
           while (!Utils::windowIsViewable(display, window)) {
-            std::cout << "sleeping 0.01s" << std::endl;
             nanosleep(&sleeptime, nullptr);
           }
           // Wait for map
           XSetInputFocus(display, window, RevertToNone, CurrentTime);
           XRaiseWindow(display, window);
         } else {
-          std::cout << "Hiding window " << window << "." << std::endl;
+          std::cout << "Info: Hiding window " << window <<
+            " belonging to binary \"" << launchData.binPath << "\"." <<
+            std::endl;
           XIconifyWindow(display, window, 0);
         }
       }
     }
   } else {
-    // Run program in separate process
+    // Run program in separate process, discard the output
     if (fork() == 0) {
-      execv(launchData.binPath.c_str(), &launchData.args[0]);
+      std::cout << "Info: Launching \"" <<
+        launchData.binPath << "\"." << std::endl;
+      auto fd = open("/dev/null", O_WRONLY | O_CREAT, 0666);
+      dup2(fd, STDOUT_FILENO);
+      std::vector<char *> argv = {};
+      argv.reserve(launchData.args.size() + 2);
+      argv.push_back(strdup(launchData.binPath.c_str()));
+      for (auto arg : launchData.args) {
+        argv.push_back(strdup(arg.c_str()));
+      }
+      argv.push_back(NULL);
+      if (execv(launchData.binPath.c_str(), argv.data()) == -1) {
+        std::cout << "Error: Failed to launch program \"" << launchData.binPath
+          << std::endl;
+      }
     }
   }
 }
@@ -110,6 +131,7 @@ int main(int argc, char *argv[]) {
   // Open connection to the server
   display = XOpenDisplay("");
   rootWindow = DefaultRootWindow(display);
+  XSelectInput(display, rootWindow, VisibilityChangeMask);
 
   // Determine configuration
   Config config = Utils::parseConfig(display, configFilePath);

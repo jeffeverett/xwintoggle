@@ -48,11 +48,10 @@ namespace Utils {
           toggleBinPath = binPath;
         }
         auto argsNode = launchData[i]["args"];
-        std::vector<char*> args = {};
+        std::vector<std::string> args = {};
         for (int j = 0; j < argsNode.size(); j++) {
-          argsNode.push_back(argsNode[j].as<std::string>().c_str());
+          argsNode.push_back(argsNode[j].as<std::string>());
         }
-        args.push_back(nullptr);
         config.launchData.push_back(ApplicationLaunchData {
           key, keyCode, binPath, toggleBinPath, args
         });

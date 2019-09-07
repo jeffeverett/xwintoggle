@@ -8,6 +8,7 @@
 #include <string>
 
 namespace Utils {
+  bool windowIsVisible(Display *display, Window window, float threshold);
   bool windowIsViewable(Display *display, Window window);
   void findWindowsOwnedByExeRecursive(Display *display, std::string exeName,
     bool useCmdLine, Window startWindow, std::vector<Window> &windows);
