@@ -9,6 +9,9 @@
 #include <fstream>
 #include <sstream>
 #include <cstring>
+#include <math.h>
+
+#define DEBUG 0
 
 void printWindowDebug(unsigned long pid, Window window) {
   #ifdef DEBUG
@@ -20,88 +23,77 @@ void printWindowDebug(unsigned long pid, Window window) {
   #endif
 }
 
-std::vector<Window> getWindows(Display *display, Window rootWindow) {
-  Atom pidAtom = XInternAtom(display, "_NET_WM_PID", true);
-  Window rWindow;
-  Window parentWindow;
-  Window *childrenWindows;
-  unsigned int numChildren;
-  XQueryTree(display, rootWindow, &rWindow, &parentWindow,
-    &childrenWindows, &numChildren);
-
-  std::vector<Window> windows = {};
-  for (int i = 0; i < numChildren; i++) {
-    windows.push_back(childrenWindows[i]);
-
-    auto childWindows = getWindows(display, windows[i]);
-    windows.reserve(windows.size() + childWindows.size());
-    windows.insert(windows.end(), childWindows.begin(), childWindows.end());
-  }
-
-  return windows;
-}
-
-std::vector<Window> getWindowsAbove(Display *display, Window rootWindow,
-  Window window) {
-  Atom pidAtom = XInternAtom(display, "_NET_WM_PID", true);
-  Window rWindow;
-  Window parentWindow;
-  Window *childrenWindows;
-  unsigned int numChildren;
-  XQueryTree(display, rootWindow, &rWindow, &parentWindow,
-    &childrenWindows, &numChildren);
-
-  bool reachedWindow = false;
-  std::vector<Window> windows = { window };
-  for (int i = 0; i < numChildren; i++) {
-    if (!reachedWindow) {
-      if (childrenWindows[i] == window) {
-        reachedWindow = true;
-      }
-      continue;
-    }
-    windows.push_back(childrenWindows[i]);
-
-    auto childWindows = getWindows(display, childrenWindows[i]);
-    windows.reserve(windows.size() + childWindows.size());
-    windows.insert(windows.end(), childWindows.begin(), childWindows.end());
-  }
-
-  return windows;
-}
-
-std::vector<float> getWindowCoords(Display *display, Window window) {
+std::vector<std::vector<int>> getWindowCoords(Display *display,
+  Window queryWindow, Window targetWindow,
+  bool *reachedTargetPtr = nullptr, int absX = 0, int absY = 0) {
   // Gather geometry of all windows in higher zorder
-  std::vector<float> coords = {};
+  std::vector<std::vector<int>> coords = {};
 
-  Window rootWindow = DefaultRootWindow(display);
-  auto windows = getWindows(display, rootWindow);
-  std::vector<Window> higherOrderWindows =
-    getWindowsAbove(display, rootWindow, window);
-  for (auto window : higherOrderWindows) {
-    bool viewable = Utils::windowIsViewable(display, window);
-    if (viewable) {
-      // Indicates whether a window is mapped or not
-      XWindowAttributes windowAttributes;
-      XGetWindowAttributes(display, window, &windowAttributes);
-      coords.push_back(windowAttributes.x);
-      coords.push_back(windowAttributes.y);
-      coords.push_back(windowAttributes.width);
-      coords.push_back(windowAttributes.height);
+  bool reachedTarget = false;
+  if (!reachedTargetPtr) {
+    reachedTargetPtr = &reachedTarget;
+  }
+
+  Window rWindow;
+  Window parentWindow;
+  Window *childrenWindows;
+  unsigned int numChildren;
+  XQueryTree(display, queryWindow, &rWindow, &parentWindow,
+    &childrenWindows, &numChildren);
+
+  for (int i = 0; i < numChildren; i++) {
+    if (childrenWindows[i] == targetWindow) {
+      *reachedTargetPtr = true;
+    }
+
+    XWindowAttributes windowAttributes;
+    XGetWindowAttributes(display, childrenWindows[i], &windowAttributes);
+    if (*reachedTargetPtr && windowAttributes.map_state == IsViewable &&
+      windowAttributes.c_class != InputOnly) {
+      coords.push_back(std::vector<int> {
+        windowAttributes.x + absX,
+        windowAttributes.y + absY,
+        windowAttributes.x + absX + windowAttributes.width,
+        windowAttributes.y + absY + windowAttributes.height });
+    }
+
+    if (childrenWindows[i] != targetWindow) {
+      auto childCoords = getWindowCoords(display, childrenWindows[i],
+        targetWindow, reachedTargetPtr, absX + windowAttributes.x,
+        absY + windowAttributes.y);
+
+      coords.reserve(coords.size() + childCoords.size());
+      coords.insert(coords.end(), childCoords.begin(), childCoords.end());
     }
   }
 
   return coords;
 }
 
-float calculateWindowOverlap(float x1, float y1, float w1, float h1,
-  float x2, float y2, float w2, float h2, float x3 = 0, float y3 = 0,
-  float w3 = 65535, float h3 = 65535) {
-  return
-    std::max(0.0f, std::min(std::min(x1+w1, x2+w2), x3+w3) -
-      std::max(std::max(x1, x2), x3)) *
-    std::max(0.0f, std::min(std::min(y1+h1, y2+h2), h3+h3) -
-      std::max(std::max(y1, y3), y3));
+int calculateWindowOverlap(std::vector<std::vector<int>> windowCoords) {
+  if (windowCoords.size() == 0) {
+    return 0;
+  }
+
+  #ifdef DEBUG
+      std::cout << windowCoords.size() << std::endl;
+      for (auto windCoords : windowCoords) {
+        for (auto elem : windCoords) {
+          std::cout << elem << ",";
+        }
+        std::cout << std::endl;
+      }
+  #endif
+
+  std::vector<int> intersect = windowCoords[0];
+  for (int i = 1; i < windowCoords.size(); i++) {
+    intersect[0] = std::max(intersect[0], windowCoords[i][0]);
+    intersect[1] = std::max(intersect[1], windowCoords[i][1]);
+    intersect[2] = std::min(intersect[2], windowCoords[i][2]);
+    intersect[3] = std::min(intersect[3], windowCoords[i][3]);
+  }
+  return std::max(0, intersect[2]-intersect[0]) *
+    std::max(0, intersect[3]-intersect[1]);
 }
 
 namespace Utils {
@@ -111,28 +103,43 @@ namespace Utils {
       return false;
     }
 
-    auto coords = getWindowCoords(display, window);
-    float area = coords[2] * coords[3];
-    float coveredArea = 0;
+    auto rootWindow = DefaultRootWindow(display);
+    auto coords = getWindowCoords(display, rootWindow, window);
 
-    // Calculate overlap of stacked-on-top windows
-    for (int i = 4; i < coords.size(); i+=4) {
-      coveredArea += calculateWindowOverlap(
-        coords[0], coords[1], coords[2], coords[3],
-        coords[i], coords[i+1], coords[i+2], coords[i+3]);
+    if (coords.size() <= 1) {
+      return true;
     }
 
-    // Remove "double counting" of overlap
-    for (int i = 4; i < coords.size(); i+=4) {
-      for (int j = i+4; j < coords.size(); j+=4) {
-        coveredArea -= calculateWindowOverlap(
-          coords[0], coords[1], coords[2], coords[3],
-          coords[i], coords[i+1], coords[i+2], coords[i+3],
-          coords[j], coords[j+1], coords[j+2], coords[j+3]);
-      }
+    float area = (coords[0][2]-coords[0][0]) * (coords[0][3]-coords[0][1]);
+    float coveredArea = 0;
+
+    auto selector = std::vector<bool>(coords.size()-1);
+    for (int i = 0; i < selector.size(); i++) {
+      std::fill(selector.begin(), selector.begin()+i+1, true);
+      std::fill(selector.begin()+i+1, selector.end(), false);
+
+      auto selectedWindows = std::vector<std::vector<int>>(i);
+      do {
+        selectedWindows.clear();
+        for (int j = 0; j < selector.size(); j++) {
+          if (selector[j]) selectedWindows.push_back(coords[j+1]);
+        }
+        selectedWindows.push_back(coords[0]);
+        coveredArea += pow(-1, i)*calculateWindowOverlap(selectedWindows);
+      } while (std::prev_permutation(selector.begin(), selector.end()));
     }
 
     float tol = 1e-4;
+    #ifdef DEBUG
+      for (auto windCoords : coords) {
+        for (auto elem : windCoords) {
+          std::cout << elem << ",";
+        }
+        std::cout << std::endl;
+      }
+      std::cout << "Area: " << area << ", CoveredArea: " << coveredArea
+        << std::endl;
+    #endif
     return (1 - coveredArea/area + tol) >= threshold;
   }
 
