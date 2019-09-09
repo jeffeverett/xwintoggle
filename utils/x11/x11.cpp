@@ -11,8 +11,6 @@
 #include <cstring>
 #include <math.h>
 
-#define DEBUG 0
-
 void printWindowDebug(unsigned long pid, Window window) {
   #ifdef DEBUG
     std::cout << "found window with PID " << pid;
@@ -140,7 +138,7 @@ namespace Utils {
       std::cout << "Area: " << area << ", CoveredArea: " << coveredArea
         << std::endl;
     #endif
-    return (1 - coveredArea/area + tol) >= threshold;
+    return (1 - ((float)coveredArea)/((float)area) + tol) >= threshold;
   }
 
   bool windowIsViewable(Display *display, Window window) {
